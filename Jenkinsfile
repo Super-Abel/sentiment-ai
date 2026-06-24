@@ -189,7 +189,14 @@ pipeline {
         stage('Deploy Staging') {
             when { expression { env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' } }
             steps {
-                sh 'curl -f http://sentiment-staging:8000/health || exit 1'
+                sh '''
+                    for i in $(seq 1 10); do
+                        curl -f http://sentiment-staging:8000/health && exit 0
+                        echo "En attente du démarrage du conteneur (tentative $i/10)..."
+                        sleep 3
+                    done
+                    exit 1
+                '''
             }
         }
 
