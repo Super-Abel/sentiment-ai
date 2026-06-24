@@ -23,13 +23,13 @@ resource "docker_container" "prometheus" {
   # host_path référencerait un chemin invisible pour le démon Docker de l'hôte.
   # On copie donc le contenu des fichiers directement dans le conteneur.
   upload {
-    content    = file("${path.module}/../monitoring/prometheus.yml")
-    file       = "/etc/prometheus/prometheus.yml"
+    content = file("${path.module}/../monitoring/prometheus.yml")
+    file    = "/etc/prometheus/prometheus.yml"
   }
 
   upload {
-    content    = file("${path.module}/../monitoring/alerts.yml")
-    file       = "/etc/prometheus/alerts.yml"
+    content = file("${path.module}/../monitoring/alerts.yml")
+    file    = "/etc/prometheus/alerts.yml"
   }
 }
 
