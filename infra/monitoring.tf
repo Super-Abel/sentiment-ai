@@ -19,16 +19,17 @@ resource "docker_container" "prometheus" {
     external = 9090
   }
 
-  volumes {
-    host_path      = abspath("${path.module}/../monitoring/prometheus.yml")
-    container_path = "/etc/prometheus/prometheus.yml"
-    read_only      = true
+  # Terraform s'exécute dans le conteneur Jenkins (DooD) : un bind-mount avec
+  # host_path référencerait un chemin invisible pour le démon Docker de l'hôte.
+  # On copie donc le contenu des fichiers directement dans le conteneur.
+  upload {
+    content    = file("${path.module}/../monitoring/prometheus.yml")
+    file       = "/etc/prometheus/prometheus.yml"
   }
 
-  volumes {
-    host_path      = abspath("${path.module}/../monitoring/alerts.yml")
-    container_path = "/etc/prometheus/alerts.yml"
-    read_only      = true
+  upload {
+    content    = file("${path.module}/../monitoring/alerts.yml")
+    file       = "/etc/prometheus/alerts.yml"
   }
 }
 
