@@ -221,7 +221,7 @@ pipeline {
 
                     # 3. Prometheus scrape l'app
                     sleep 20  # attendre au moins 1 scrape (15s)
-                    curl -s "http://prometheus:9090/api/v1/query?\
+                    curl -sg "http://prometheus:9090/api/v1/query?\
 query=up{job='sentiment-ai'}" | \
                         grep -q '"value":.*1' || exit 1
                     echo "Prometheus scrape sentiment-ai : UP"
