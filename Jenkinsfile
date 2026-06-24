@@ -1,12 +1,10 @@
-// Jenkinsfile - Pipeline CI/CD SentimentAI
+// Jenkinsfile - Pipeline CI/CD SentimentAI (TP3 - 8 stages)
 pipeline {
-    agent any  // s'exécute sur n'importe quel agent disponible
+    agent any
 
     environment {
         IMAGE_NAME = 'sentiment-ai'
         REGISTRY   = 'ghcr.io/super-abel'
-        // IMAGE_TAG = SHA Git court du commit (ex : a3f8c12)
-        // Chaque build produit une image taguée de façon unique et traçable
         IMAGE_TAG  = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
     }
 
@@ -23,9 +21,6 @@ pipeline {
         }
 
         // ── Stage 2 : Lint ─────────────────────────────────────────────────
-        // Analyse statique du code Python avec flake8.
-        // Lance flake8 dans un conteneur éphémère python:3.12-slim :
-        // aucune dépendance sur l'agent Jenkins.
         stage('Lint') {
             steps {
                 sh '''
@@ -39,21 +34,29 @@ pipeline {
         }
 
         // ── Stage 3 : Build & Test ─────────────────────────────────────────
-        // Construit l'image Docker taguée avec le SHA Git,
-        // puis lance pytest à l'intérieur de cette image.
-        // --cov-fail-under=70 : le pipeline échoue si la couverture < 70 %.
+        // Construit l'image Docker, lance pytest et copie coverage.xml
+        // pour SonarQube (stage suivant).
         stage('Build & Test') {
             steps {
-                sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
-                sh """
-                    docker run --rm \
+                sh '''
+                    docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
+                    docker rm -f test-runner 2>/dev/null || true
+                    set +e
+                    docker run \
+                        -e CI=true \
+                        --name test-runner \
                         ${IMAGE_NAME}:${IMAGE_TAG} \
                         pytest tests/ -v \
                             --cov=src \
-                            --cov-report=xml:coverage.xml \
+                            --cov-report=xml:/tmp/coverage.xml \
                             --cov-report=term-missing \
                             --cov-fail-under=70
-                """
+                    TEST_EXIT_CODE=$?
+                    set -e
+                    docker cp test-runner:/tmp/coverage.xml ./coverage.xml 2>/dev/null || true
+                    docker rm -f test-runner 2>/dev/null || true
+                    exit $TEST_EXIT_CODE
+                '''
             }
             post {
                 failure {
@@ -62,10 +65,69 @@ pipeline {
             }
         }
 
-        // ── Stage 4 : Push ─────────────────────────────────────────────────
-        // Pousse l'image vers ghcr.io UNIQUEMENT sur la branche main.
-        // Les branches feature sont buildées/testées mais leurs images
-        // ne polluent pas le registry.
+        // ── Stage 4 : SonarQube Analysis ───────────────────────────────────
+        stage('SonarQube Analysis') {
+            environment {
+                SONARQUBE_TOKEN = credentials('sonar-token')
+            }
+            steps {
+                withSonarQubeEnv('sonarqube') {
+                    sh '''
+                        docker run --rm \
+                            --network cicd-network \
+                            --volumes-from jenkins \
+                            -w "$WORKSPACE" \
+                            -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+                            -e SONAR_TOKEN="$SONARQUBE_TOKEN" \
+                            sonarsource/sonar-scanner-cli:latest \
+                            sonar-scanner \
+                            -Dsonar.projectKey=sentiment-ai \
+                            -Dsonar.projectName=SentimentAI \
+                            -Dsonar.projectBaseDir="$WORKSPACE" \
+                            -Dsonar.sources=src \
+                            -Dsonar.python.version=3.11 \
+                            -Dsonar.python.coverage.reportPaths=coverage.xml \
+                            -Dsonar.sourceEncoding=UTF-8 \
+                            -Dsonar.scanner.metadataFilePath=$WORKSPACE/report-task.txt
+                    '''
+                }
+            }
+        }
+
+        // ── Stage 5 : Quality Gate ─────────────────────────────────────────
+        // Bloque le pipeline si coverage < 70 % ou bugs SonarQube détectés.
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 15, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        // ── Stage 6 : Security Scan ────────────────────────────────────────
+        // Scan CVE Trivy — bloque si vulnérabilité HIGH ou CRITICAL trouvée.
+        stage('Security Scan') {
+            steps {
+                sh '''
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v trivy-cache:/root/.cache/trivy \
+                        aquasec/trivy:latest image \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 1 \
+                        --format table \
+                ''' + "${IMAGE_NAME}:${IMAGE_TAG}"
+            }
+            post {
+                failure {
+                    echo 'Vulnérabilités CRITICAL ou HIGH détectées !'
+                    echo 'Corrigez les dépendances avant de déployer.'
+                }
+            }
+        }
+
+        // ── Stage 7 : Push ─────────────────────────────────────────────────
+        // Pousse l'image vers ghcr.io uniquement sur la branche main.
         stage('Push') {
             when { branch 'main' }
             steps {
@@ -85,11 +147,23 @@ pipeline {
                 }
             }
         }
+
+        // ── Stage 8 : Deploy Staging ───────────────────────────────────────
+        stage('Deploy Staging') {
+            when { branch 'main' }
+            steps {
+                echo "Déploiement de ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} en staging..."
+                sh '''
+                    docker compose -f docker-compose.yml -p staging down 2>/dev/null || true
+                    docker compose -f docker-compose.yml -p staging up -d
+                    echo "Staging disponible sur http://localhost:8001"
+                '''
+            }
+        }
     }
 
     post {
         always {
-            // Nettoyer les conteneurs de test, qu'il y ait succès ou échec
             sh 'docker compose down -v 2>/dev/null || true'
         }
         success {
