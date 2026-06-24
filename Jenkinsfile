@@ -183,16 +183,19 @@ pipeline {
         }
 
         // ── Stage 10 : Deploy Staging ──────────────────────────────────────
+        // Jenkins tourne lui-même dans un conteneur (DooD) attaché à
+        // cicd-network : on vérifie via le nom DNS du conteneur et son port
+        // interne, pas via "localhost" (qui désignerait Jenkins lui-même).
         stage('Deploy Staging') {
             when { expression { env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' } }
             steps {
-                sh 'curl -f http://localhost:8001/health || exit 1'
+                sh 'curl -f http://sentiment-staging:8000/health || exit 1'
             }
         }
 
         // ── Stage 11 : Smoke Test ──────────────────────────────────────────
         // Vérifie que l'app, /metrics, Prometheus et Grafana sont opérationnels
-        // après déploiement. Port 8001 (staging) — 8080 réservé à Jenkins.
+        // après déploiement, via leurs noms DNS sur cicd-network.
         stage('Smoke Test') {
             when { expression { env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' } }
             steps {
@@ -201,23 +204,23 @@ pipeline {
                     sleep 10
 
                     # 1. L'app répond
-                    curl -f http://localhost:8001/health || exit 1
+                    curl -f http://sentiment-staging:8000/health || exit 1
                     echo "/health OK"
 
                     # 2. Les métriques sont exposées
-                    curl -s http://localhost:8001/metrics | \
+                    curl -s http://sentiment-staging:8000/metrics | \
                         grep -q sentiment_predictions_total || exit 1
                     echo "/metrics OK — métriques SentimentAI présentes"
 
                     # 3. Prometheus scrape l'app
                     sleep 20  # attendre au moins 1 scrape (15s)
-                    curl -s "http://localhost:9090/api/v1/query?\
+                    curl -s "http://prometheus:9090/api/v1/query?\
 query=up{job='sentiment-ai'}" | \
                         grep -q '"value":.*1' || exit 1
                     echo "Prometheus scrape sentiment-ai : UP"
 
                     # 4. Grafana répond
-                    curl -f http://localhost:3000/api/health || exit 1
+                    curl -f http://grafana:3000/api/health || exit 1
                     echo "Grafana OK"
                 '''
             }
