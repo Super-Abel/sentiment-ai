@@ -1,4 +1,4 @@
-// Jenkinsfile - Pipeline CI/CD SentimentAI (TP4 - 10 stages)
+// Jenkinsfile - Pipeline CI/CD SentimentAI (TP5 - 11 stages)
 pipeline {
     agent any
 
@@ -34,8 +34,6 @@ pipeline {
         }
 
         // ── Stage 3 : IaC Validate ─────────────────────────────────────────
-        // Vérifie le formatage et la syntaxe HCL sur toutes les branches
-        // (Fail Fast). -backend=false évite toute connexion réseau.
         stage('IaC Validate') {
             steps {
                 dir('infra') {
@@ -157,8 +155,7 @@ pipeline {
         }
 
         // ── Stage 9 : IaC Apply ────────────────────────────────────────────
-        // Provisionne l'infra staging avec l'image du commit exact.
-        // main seulement : les branches feature ne modifient pas le staging.
+        // Provisionne SentimentAI + Prometheus + Grafana avec l'image exacte.
         stage('IaC Apply') {
             when { branch 'main' }
             steps {
@@ -179,6 +176,46 @@ pipeline {
                 sh 'curl -f http://localhost:8001/health || exit 1'
             }
         }
+
+        // ── Stage 11 : Smoke Test ──────────────────────────────────────────
+        // Vérifie que l'app, /metrics, Prometheus et Grafana sont opérationnels
+        // après déploiement. Port 8001 (staging) — 8080 réservé à Jenkins.
+        stage('Smoke Test') {
+            when { branch 'main' }
+            steps {
+                sh '''
+                    echo "Attente démarrage (10s)..."
+                    sleep 10
+
+                    # 1. L'app répond
+                    curl -f http://localhost:8001/health || exit 1
+                    echo "/health OK"
+
+                    # 2. Les métriques sont exposées
+                    curl -s http://localhost:8001/metrics | \
+                        grep -q sentiment_predictions_total || exit 1
+                    echo "/metrics OK — métriques SentimentAI présentes"
+
+                    # 3. Prometheus scrape l'app
+                    sleep 20  # attendre au moins 1 scrape (15s)
+                    curl -s "http://localhost:9090/api/v1/query?\
+query=up{job='sentiment-ai'}" | \
+                        grep -q '"value":.*1' || exit 1
+                    echo "Prometheus scrape sentiment-ai : UP"
+
+                    # 4. Grafana répond
+                    curl -f http://localhost:3000/api/health || exit 1
+                    echo "Grafana OK"
+                '''
+            }
+            post {
+                failure {
+                    sh 'docker logs prometheus || true'
+                    sh 'docker logs sentiment-staging || true'
+                    echo 'Smoke Test KO — voir logs ci-dessus'
+                }
+            }
+        }
     }
 
     post {
@@ -186,7 +223,7 @@ pipeline {
             sh 'docker compose down -v 2>/dev/null || true'
         }
         success {
-            echo "Pipeline OK — ${IMAGE_TAG} déployé"
+            echo "Pipeline OK — ${IMAGE_TAG} déployé avec monitoring"
         }
         failure {
             echo 'Pipeline KO'
