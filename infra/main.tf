@@ -46,8 +46,10 @@ resource "docker_container" "sentiment_staging" {
     "LOG_LEVEL=INFO",
   ]
 
+  # L'image (python:3.11-slim) ne contient pas curl : on réutilise python,
+  # déjà présent, comme dans le docker-compose.yml d'origine (TP1).
   healthcheck {
-    test     = ["CMD", "curl", "-f", "http://localhost:8000/health"]
+    test     = ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
     interval = "30s"
     timeout  = "10s"
     retries  = 3
