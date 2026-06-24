@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Étape 3 : copier le code source (invalidé à chaque modification du code)
 COPY src/ ./src/
 COPY tests/ ./tests/
+COPY .coveragerc .
 
 # Documenter le port utilisé par l'application
 EXPOSE 8000
