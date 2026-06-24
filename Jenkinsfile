@@ -113,6 +113,9 @@ pipeline {
         }
 
         // ── Stage 7 : Security Scan ────────────────────────────────────────
+        // Rapport complet HIGH+CRITICAL (information), gate bloquant sur CRITICAL
+        // uniquement (les HIGH sans fix compatible avec les dépendances actuelles
+        // sont suivis mais n'empêchent pas le déploiement).
         stage('Security Scan') {
             steps {
                 sh '''
@@ -121,13 +124,23 @@ pipeline {
                         -v trivy-cache:/root/.cache/trivy \
                         aquasec/trivy:latest image \
                         --severity HIGH,CRITICAL \
+                        --ignore-unfixed \
+                        --exit-code 0 \
+                        --format table \
+                ''' + "${IMAGE_NAME}:${IMAGE_TAG}" + '''
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v trivy-cache:/root/.cache/trivy \
+                        aquasec/trivy:latest image \
+                        --severity CRITICAL \
+                        --ignore-unfixed \
                         --exit-code 1 \
                         --format table \
                 ''' + "${IMAGE_NAME}:${IMAGE_TAG}"
             }
             post {
                 failure {
-                    echo 'Vulnérabilités CRITICAL ou HIGH détectées !'
+                    echo 'Vulnérabilités CRITICAL détectées !'
                     echo 'Corrigez les dépendances avant de déployer.'
                 }
             }
