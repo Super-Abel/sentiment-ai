@@ -9,9 +9,9 @@ terraform {
   }
 }
 
-# Windows avec Docker Desktop (named pipe)
+# Terraform s'exécute dans le conteneur Jenkins (Linux, DooD) : socket Unix monté
 provider "docker" {
-  host = "npipe:////./pipe/docker_engine"
+  host = "unix:///var/run/docker.sock"
 }
 
 # Réseau Docker partagé Jenkins / SonarQube / SentimentAI
