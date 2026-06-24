@@ -148,7 +148,7 @@ pipeline {
 
         // ── Stage 8 : Push ─────────────────────────────────────────────────
         stage('Push') {
-            when { branch 'main' }
+            when { expression { env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' } }
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'github-token',
@@ -170,7 +170,7 @@ pipeline {
         // ── Stage 9 : IaC Apply ────────────────────────────────────────────
         // Provisionne SentimentAI + Prometheus + Grafana avec l'image exacte.
         stage('IaC Apply') {
-            when { branch 'main' }
+            when { expression { env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' } }
             steps {
                 dir('infra') {
                     sh 'terraform init -input=false'
@@ -184,7 +184,7 @@ pipeline {
 
         // ── Stage 10 : Deploy Staging ──────────────────────────────────────
         stage('Deploy Staging') {
-            when { branch 'main' }
+            when { expression { env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' } }
             steps {
                 sh 'curl -f http://localhost:8001/health || exit 1'
             }
@@ -194,7 +194,7 @@ pipeline {
         // Vérifie que l'app, /metrics, Prometheus et Grafana sont opérationnels
         // après déploiement. Port 8001 (staging) — 8080 réservé à Jenkins.
         stage('Smoke Test') {
-            when { branch 'main' }
+            when { expression { env.GIT_BRANCH == 'origin/main' || env.BRANCH_NAME == 'main' } }
             steps {
                 sh '''
                     echo "Attente démarrage (10s)..."
