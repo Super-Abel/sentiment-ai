@@ -1,4 +1,4 @@
-// Jenkinsfile - Pipeline CI/CD SentimentAI (TP3 - 8 stages)
+// Jenkinsfile - Pipeline CI/CD SentimentAI (TP4 - 10 stages)
 pipeline {
     agent any
 
@@ -33,9 +33,20 @@ pipeline {
             }
         }
 
-        // ── Stage 3 : Build & Test ─────────────────────────────────────────
-        // Construit l'image Docker, lance pytest et copie coverage.xml
-        // pour SonarQube (stage suivant).
+        // ── Stage 3 : IaC Validate ─────────────────────────────────────────
+        // Vérifie le formatage et la syntaxe HCL sur toutes les branches
+        // (Fail Fast). -backend=false évite toute connexion réseau.
+        stage('IaC Validate') {
+            steps {
+                dir('infra') {
+                    sh 'terraform init -backend=false -input=false'
+                    sh 'terraform fmt -check'
+                    sh 'terraform validate'
+                }
+            }
+        }
+
+        // ── Stage 4 : Build & Test ─────────────────────────────────────────
         stage('Build & Test') {
             steps {
                 sh '''
@@ -65,7 +76,7 @@ pipeline {
             }
         }
 
-        // ── Stage 4 : SonarQube Analysis ───────────────────────────────────
+        // ── Stage 5 : SonarQube Analysis ───────────────────────────────────
         stage('SonarQube Analysis') {
             environment {
                 SONARQUBE_TOKEN = credentials('sonar-token')
@@ -94,8 +105,7 @@ pipeline {
             }
         }
 
-        // ── Stage 5 : Quality Gate ─────────────────────────────────────────
-        // Bloque le pipeline si coverage < 70 % ou bugs SonarQube détectés.
+        // ── Stage 6 : Quality Gate ─────────────────────────────────────────
         stage('Quality Gate') {
             steps {
                 timeout(time: 15, unit: 'MINUTES') {
@@ -104,8 +114,7 @@ pipeline {
             }
         }
 
-        // ── Stage 6 : Security Scan ────────────────────────────────────────
-        // Scan CVE Trivy — bloque si vulnérabilité HIGH ou CRITICAL trouvée.
+        // ── Stage 7 : Security Scan ────────────────────────────────────────
         stage('Security Scan') {
             steps {
                 sh '''
@@ -126,8 +135,7 @@ pipeline {
             }
         }
 
-        // ── Stage 7 : Push ─────────────────────────────────────────────────
-        // Pousse l'image vers ghcr.io uniquement sur la branche main.
+        // ── Stage 8 : Push ─────────────────────────────────────────────────
         stage('Push') {
             when { branch 'main' }
             steps {
@@ -148,16 +156,27 @@ pipeline {
             }
         }
 
-        // ── Stage 8 : Deploy Staging ───────────────────────────────────────
+        // ── Stage 9 : IaC Apply ────────────────────────────────────────────
+        // Provisionne l'infra staging avec l'image du commit exact.
+        // main seulement : les branches feature ne modifient pas le staging.
+        stage('IaC Apply') {
+            when { branch 'main' }
+            steps {
+                dir('infra') {
+                    sh 'terraform init -input=false'
+                    sh """
+                        terraform apply -auto-approve \
+                            -var='image_tag=${IMAGE_TAG}'
+                    """
+                }
+            }
+        }
+
+        // ── Stage 10 : Deploy Staging ──────────────────────────────────────
         stage('Deploy Staging') {
             when { branch 'main' }
             steps {
-                echo "Déploiement de ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} en staging..."
-                sh '''
-                    docker compose -f docker-compose.yml -p staging down 2>/dev/null || true
-                    docker compose -f docker-compose.yml -p staging up -d
-                    echo "Staging disponible sur http://localhost:8001"
-                '''
+                sh 'curl -f http://localhost:8001/health || exit 1'
             }
         }
     }
@@ -167,10 +186,10 @@ pipeline {
             sh 'docker compose down -v 2>/dev/null || true'
         }
         success {
-            echo "Pipeline réussi ! Image : ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+            echo "Pipeline OK — ${IMAGE_TAG} déployé"
         }
         failure {
-            echo 'Pipeline échoué. Consultez les logs ci-dessus.'
+            echo 'Pipeline KO'
         }
     }
 }

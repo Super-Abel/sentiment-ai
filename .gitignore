@@ -220,3 +220,9 @@ __marimo__/
 # Exclude docs directory (added for TP task)
 docs/
 
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+
